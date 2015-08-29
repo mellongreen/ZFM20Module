@@ -1,21 +1,3 @@
-/*
-Class for interfacing with ZFM20Module
-Copyright (C) 2015  Mellon Green
-
-This program is free software; you can redistribute it and/or
-modify it under the terms of the GNU General Public License
-as published by the Free Software Foundation; either version 2
-of the License, or (at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with this program; if not, write to the Free Software
-Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
-*/
 import gnu.io.CommPortIdentifier;
 import gnu.io.PortInUseException;
 import gnu.io.SerialPort;
@@ -58,6 +40,7 @@ public class ZFM20Module {
 
     private byte[] pkgbuffer;
     private byte[] databuffer;
+    public static final int WAITTIME = 1200;
 
     private int defaultBaudrate= 57600;
     private SerialPort port;
@@ -333,6 +316,13 @@ public class ZFM20Module {
         input.close();
         port.close();
     }
+    protected void finalize()
+    {
+        try {
+            close();
+        } catch (Exception e) {
+        }
+    }
     private boolean getdata(DATATYPE type) throws IOException
     {
         ByteArrayOutputStream data = new ByteArrayOutputStream();
@@ -502,30 +492,21 @@ public class ZFM20Module {
         while (replycode!=0x0);
         return true;
     }
-    private short getChecksum(byte[] data,int begin,int length,byte... aux)
+    private long getChecksum(byte[] data,int begin,int length,byte... aux)
     {
-        short ret=0;
-        for (int i = 0; i < length; i++)
+        int i = begin;
+        long sum = 0;
+        while (length > 0)
         {
-            short arg = (short)(data[begin+i]);
-            while (arg != 0)
-            {
-                short c = (short)(ret & arg);
-                ret ^= arg;
-                arg = (short)(c << 1);
-            }
+            sum += (data[i]&0xff);
+            --length;
+            i++;
         }
         for(byte x: aux)
         {
-            short arg = (short)x;
-            while (arg != 0)
-            {
-                short c = (short)(ret & arg);
-                ret ^= arg;
-                arg = (short)(c << 1);
-            }
+            sum += (x&0xff);
         }
-        return ret;
+        return sum;
     }
     private short getChecksum(byte... args)
     {
@@ -574,7 +555,6 @@ public class ZFM20Module {
         return reply[9];
     }
 
-    //dont use these
     public boolean downchar(int charBufferID,byte[] data) throws IOException {
         byte x = (byte)charBufferID;
         byte replycode;
@@ -592,12 +572,15 @@ public class ZFM20Module {
     }
     private boolean writepkg(byte[] data,byte... prefix) throws IOException
     {
+
         if(data.length<=0)return false;
         int remainingbyte = data.length,current=0;
-        short packetlength=0,ck=0;
+        short packetlength=0;
+        long ck=0;
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         remainingbyte-=PACKETSIZE;
         boolean term =false;
+        byte pkgiden;
         while (true)
         {
             out.reset();
@@ -605,27 +588,32 @@ public class ZFM20Module {
             if(remainingbyte<=0)
             {
                 term=true;
-                out.write((byte)0x8);
+                pkgiden = (byte)0x8;
                 packetlength = (short) (remainingbyte+PACKETSIZE+2);
             }
             else
             {
-                out.write((byte)0x2);
+                pkgiden = (byte)0x2;
                 packetlength = PACKETSIZE+2;
             }
-
-            ck = getChecksum(data,current,packetlength-2,(byte) ((packetlength >> 8) & 0xFF),(byte)(packetlength & 0xFF));
+            out.write(pkgiden);
+            ck = getChecksum(data,current,packetlength-2,(byte) ((packetlength >> 8) & 0xFF),(byte)(packetlength & 0xFF),pkgiden);
 
             out.write((byte) ((packetlength >> 8) & 0xFF));
             out.write((byte) (packetlength & 0xFF));
-            out.write(data);
+
+            out.write(data,current,packetlength-2);
             out.write((byte) ((ck >> 8) & 0xFF));
             out.write((byte) (ck & 0xFF));
             output.write(out.toByteArray());
+            output.flush();
+
             if(term)break;
             current+=packetlength-2;
             remainingbyte-=PACKETSIZE;
         }
+        //byte replycode = getReply(12);
+
         out.close();
         return true;
     }

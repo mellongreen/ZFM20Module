@@ -29,20 +29,20 @@ public class ZFM20Module {
     {
         IMAGE,
         CHARFILE
-    };
+    }
     public enum DATAPKGSTATUS
     {
         FOLLOWUP,
         END,
         HANG,
         CORRUPT
-    };
+    }
 
     private byte[] pkgbuffer;
     private byte[] databuffer;
     public static final int WAITTIME = 1200;
 
-    private int defaultBaudrate= 57600;
+    private int defaultBaudrate= 115200;
     private SerialPort port;
     //# of attmept after bad reply.
     private static final int ATTEMPT=5;
@@ -57,7 +57,53 @@ public class ZFM20Module {
     private static final byte addr2 = (byte)0xFF;
     private static final byte addr3 = (byte)0xFF;
 
-    public ZFM20Module() throws UnsupportedCommOperationException, IOException, PortInUseException {
+    private static volatile ZFM20Module instance;
+    private static volatile int count =0;
+    public static synchronized ZFM20Module getInstance()
+    {
+        if (instance == null)
+        {
+            try
+            {
+                instance = new ZFM20Module();
+                if(!instance.ready)
+                {
+                    throw new Exception();
+                }
+            } catch (Exception e)
+            {
+                if(instance!=null)instance.finalize();
+                instance =null;
+                return instance;
+            }
+        }
+
+        if(count>0)
+        {
+            //in use
+            return null;
+        }
+        else
+        {
+            count++;
+            return instance;
+        }
+    }
+    public static synchronized void release(boolean resettinginstance)
+    {
+        if(resettinginstance)
+        {
+            if(instance!=null)
+            instance.finalize();
+            instance = null;
+            count =0;
+        }
+        else{
+            if(count>0)count--;
+        }
+
+    }
+    private ZFM20Module() throws UnsupportedCommOperationException, IOException, PortInUseException {
         seclevel=0;
         templatecount=0;
         matchedPage=0;
@@ -104,7 +150,7 @@ public class ZFM20Module {
         }
         ready=true;
     }
-    public void genImg() throws IOException, InterruptedException
+    public void genImg() throws IOException
     {
         byte replycode;
         do
@@ -112,7 +158,7 @@ public class ZFM20Module {
             output.write(new byte[]{(byte) 0xEF, (byte) 0x01, addr0,addr1,addr2,addr3, (byte) 0x01, (byte) 0x00, (byte) 0x03, (byte) 0x01, (byte) 0x00, (byte) 0x05});
             replycode= getReply(12);
         }
-        while (replycode!=0x0);
+        while (replycode!=0x0 && !Thread.currentThread().isInterrupted());
     }
     //upload image to upper. 8 bit greyscale. last 4 bit zeroed out
     public boolean upImg() throws IOException
@@ -432,7 +478,7 @@ public class ZFM20Module {
             default:
                 break;
         }
-        int readcount=0,discardcount=0;
+        int readcount=0;
         if(readtarget<=0)return headerstat.getValue();
 
         ByteArrayOutputStream data = new ByteArrayOutputStream();
